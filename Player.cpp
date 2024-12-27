@@ -1,150 +1,187 @@
-#include <iostream>
-#include "MacUILib.h"
-#include "objPos.h"
 #include "Player.h"
 #include "Food.h"
 
-using namespace std;
-
-#define DELAY_CONST 100000
-
-bool exitFlag;
-
-void Initialize(void);
-void GetInput(void);
-void RunLogic(void);
-void DrawScreen(void);
-void LoopDelay(void);
-void CleanUp(void);
-
-Food *food;
-Player *myPlayer;
-GameMechs *myMech;
-
-int main(void)
+Player::Player(GameMechs *thisGMRef, Food *foodObj)
 {
-
-  Initialize();
-
-  while (exitFlag == false)
-  {
-    GetInput();
-    RunLogic();
-    DrawScreen();
-    LoopDelay();
-  }
-
-  CleanUp();
+  mainGameMechsRef = thisGMRef;
+  food = foodObj;
+  myDir = STOP;
+  specialFood = false;
+  objPos start(mainGameMechsRef->getBoardSizeX() / 2, mainGameMechsRef->getBoardSizeY() / 2, '*');
+  playerPos = new objPosArrayList;
+  playerPos->insertHead(start);
+  mainGameMechsRef->setScore((playerPos->getSize() - 1));
 }
 
-void Initialize(void)
+Player::~Player()
 {
-  MacUILib_init();
-  MacUILib_clearScreen();
-
-  exitFlag = false;
-  myMech = new GameMechs();
-  food = new Food(*myMech);
-  myPlayer = new Player(myMech, food);
-  food->generateFood(*myPlayer->getPlayerPos());
+  // delete any heap members here
+  delete playerPos;
 }
 
-void GetInput(void)
+objPosArrayList *Player::getPlayerPos() const
 {
-  if (MacUILib_hasChar())
-  {
-    myMech->setInput(MacUILib_getChar());
-  }
+  // return the reference to the playerPos arrray list
+  return playerPos;
 }
 
-void RunLogic(void)
+void Player::updatePlayerDir()
 {
-
-  myPlayer->updatePlayerDir();
-  myPlayer->movePlayer();
-  exitFlag = myMech->getExitFlagStatus();
-  if (myMech->getLoseFlagStatus() == true)
+  // PPA3 input processing logic
+  char input = mainGameMechsRef->getInput();
+  if (input != 0) // if not null character
   {
-    exitFlag = true;
-  }
-}
-
-// Copied and Pasted from PPA3
-void DrawScreen(void)
-{
-  MacUILib_clearScreen();
-
-  int i, j, k;
-  for (i = 0; i < myMech->getBoardSizeY(); i++)
-  {
-    for (j = 0; j < myMech->getBoardSizeX(); j++)
+    switch (input)
     {
+    case ' ': // exit
+      mainGameMechsRef->setExitTrue();
 
-      if (i == 0 || i == myMech->getBoardSizeY() - 1 || j == 0 || j == myMech->getBoardSizeX() - 1)
+      break;
+
+    case 'W':
+    case 'w':
+      if (myDir != DOWN)
+        myDir = UP;
+
+      break;
+    case 'S':
+    case 's':
+      if (myDir != UP)
+        myDir = DOWN;
+
+      break;
+    case 'A':
+    case 'a':
+      if (myDir != RIGHT)
+        myDir = LEFT;
+
+      break;
+    case 'D':
+    case 'd':
+      if (myDir != LEFT)
+        myDir = RIGHT;
+
+      break;
+
+    default:
+      break;
+    }
+    mainGameMechsRef->clearInput();
+  }
+}
+
+void Player::movePlayer()
+{
+  // getting game board size from GameMech
+  int boardSizeX = mainGameMechsRef->getBoardSizeX();
+  int boardSizeY = mainGameMechsRef->getBoardSizeY();
+  // get current x and y
+  int thisX = playerPos->getHeadElement().pos->x;
+  int thisY = playerPos->getHeadElement().pos->y;
+  objPos newPos(thisX, thisY, '*');
+
+  // PPA3 Finite State Machine logic
+  switch (myDir)
+  {
+  case UP:
+    thisY = (thisY - 2 + (boardSizeY - 2)) % (boardSizeY - 2) + 1; // wrap around in the negative y direction
+    break;
+  case DOWN:
+    thisY = (thisY % (boardSizeY - 2)) + 1; // wrap around in the positive y direction
+    break;
+  case LEFT:
+    thisX = (thisX - 2 + (boardSizeX - 2)) % (boardSizeX - 2) + 1; // wrap around in the negative x direction
+    break;
+  case RIGHT:
+    thisX = (thisX % (boardSizeX - 2)) + 1; // wrap around in the positive x direction
+    break;
+  case STOP:
+  default:
+    break;
+  }
+
+  if (myDir != STOP)
+  {
+    newPos.setObjPos(thisX, thisY, '*');
+    playerPos->insertHead(newPos); // insert head with new position
+
+    if (!checkFoodConsumption())
+    {
+      playerPos->removeTail(); // food not consumed
+    }
+    else
+    {
+      if (specialFood)
       {
-        MacUILib_printf("#");
+        playerPos->removeTail(); // no size increase
+        specialFood = false;
+
+        // increease score by 10
+        for (int i = 0; i < 10; i++)
+        {
+          mainGameMechsRef->incrementScore();
+          food->generateFood(*playerPos);
+        }
       }
       else
       {
-        bool isSnake = false;
-        for (int k = 0; k < myPlayer->getPlayerPos()->getSize(); k++)
-        {
-          if (i == myPlayer->getPlayerPos()->getElement(k).pos->y && j == myPlayer->getPlayerPos()->getElement(k).pos->x)
-          {
-            MacUILib_printf("%c", myPlayer->getPlayerPos()->getHeadElement().symbol);
-            isSnake = true;
-            break;
-          }
-        }
-
-        if (!isSnake)
-        {
-
-          bool flag = false;
-
-          for (int m = 0; m < food->getFoodPos()->getSize(); m++)
-          {
-            if (i == food->getFoodPos()->getElement(m).pos->y && j == (food->getFoodPos()->getElement(m).pos->x))
-            {
-              MacUILib_printf("%c", food->getFoodPos()->getElement(m).getSymbol());
-
-              flag = true;
-              break;
-            }
-          }
-
-          if (!flag)
-          {
-            MacUILib_printf(" ");
-          }
-        }
+        increasePlayerLength(); // do not remove tail, increment score and generate new food.
       }
     }
-    MacUILib_printf("\n");
   }
 
-  MacUILib_printf("Score: %d \n", myMech->getScore());
-  MacUILib_printf("Special food '%%' grants 10 additonal points and no size increase \n");
-
-  if (myMech->getLoseFlagStatus() == true)
+  // collision
+  if (checkSelfCollision())
   {
-    MacUILib_printf("YOU LOST THE GAME \n");
-  }
-  else if (exitFlag == true)
-  {
-    MacUILib_printf("YOU DID NOT FINISH THE GAME :( \n");
+    mainGameMechsRef->setLoseFlag();
   }
 }
 
-void LoopDelay(void)
+bool Player::checkFoodConsumption()
 {
-  MacUILib_Delay(DELAY_CONST); // 0.1s delay
+
+  for (int i = 0; i < food->getFoodPos()->getSize(); i++)
+  {
+
+    if (playerPos->getHeadElement().getObjPos().pos->x == food->getFoodPos()->getElement(i).pos->x && playerPos->getHeadElement().getObjPos().pos->y == food->getFoodPos()->getElement(i).pos->y)
+    {
+      specialFood = checkSpecialFoodConsumption(i);
+      return true;
+    }
+  }
+
+  return false;
 }
 
-void CleanUp(void)
+void Player::increasePlayerLength()
 {
-  MacUILib_uninit();
-  delete myMech;
-  delete myPlayer;
-  delete food;
+  mainGameMechsRef->incrementScore();
+  food->generateFood(*playerPos);
+}
+
+// More methods to be added
+
+bool Player::checkSelfCollision()
+{
+
+  bool flag = false;
+  for (int i = 1; i < playerPos->getSize(); i++)
+  {
+    if (playerPos->getHeadElement().getObjPos().pos->x == playerPos->getElement(i).getObjPos().pos->x && playerPos->getHeadElement().getObjPos().pos->y == playerPos->getElement(i).getObjPos().pos->y)
+    {
+      flag = true;
+      break;
+    }
+  }
+
+  return flag;
+}
+
+bool Player::checkSpecialFoodConsumption(int i)
+{
+  if (food->getFoodPos()->getElement(i).symbol == '%')
+  {
+    return true;
+  }
+  return false;
 }
